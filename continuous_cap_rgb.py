@@ -1,6 +1,9 @@
-import cv2
+import cv2, os
 import numpy as np
-import time
+
+# Create a directory to save the images
+os.makedirs('captured_images', exist_ok=True)
+
 
 # Define the dimensions of the checkerboard
 CHECKERBOARD = (4,11)
@@ -16,7 +19,7 @@ imgpoints = [] # 2d points in image plane
 cap = cv2.VideoCapture(0)
 
 count = 0
-while count < 100:
+while count < 50:
     # Read the current frame from the webcam
     ret, frame = cap.read()
     if not ret:
@@ -30,6 +33,9 @@ while count < 100:
 
     # If found, add object points, image points
     if ret == True:
+        # Save the frame to the directory
+        cv2.imwrite(f'captured_images/image_{count}.jpg', frame)
+        
         objpoints.append(objp)
         imgpoints.append(corners)
         # Draw and display the corners
@@ -41,7 +47,7 @@ while count < 100:
     cv2.imshow('Webcam', frame)
 
     # If the user presses the 'q' key, exit the loop
-    if cv2.waitKey(100) & 0xFF == ord('q'):
+    if cv2.waitKey(200) & 0xFF == ord('q'):
         break
 
 # Release the webcam and destroy all windows

@@ -1,7 +1,9 @@
-import cv2, time
+import cv2, time, os
 import numpy as np
 from RobotRaconteur.Client import *
 
+# Create a directory to save the images
+os.makedirs('captured_images', exist_ok=True)
 
 def new_frame(pipe_ep):
     global ir_img
@@ -80,6 +82,9 @@ def main():
 
         # If found, add object points, image points
         if ret == True:
+            # Save the frame to the directory
+            cv2.imwrite(f'captured_images/image_{count}.jpg', ir_img_inverted)
+
             objpoints.append(objp)
             imgpoints.append(corners)
             # Draw and display the corners
