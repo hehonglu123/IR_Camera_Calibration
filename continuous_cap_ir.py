@@ -52,10 +52,6 @@ def main():
 	# Define the dimensions of the checkerboard
 	CHECKERBOARD = (4,11)
 
-	# Prepare object points
-	# objp = np.zeros((1, CHECKERBOARD[0]*CHECKERBOARD[1], 3), np.float32)
-	# objp[0,:,:2] = np.mgrid[0:CHECKERBOARD[0], 0:CHECKERBOARD[1]].T.reshape(-1, 2)
-
 	###########################################################################################################
 	# termination criteria
 	criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
