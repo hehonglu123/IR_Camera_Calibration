@@ -1,4 +1,4 @@
-import cv2, time, os
+import cv2, time, os, traceback
 import numpy as np
 from RobotRaconteur.Client import *
 
@@ -159,7 +159,7 @@ def main():
 
 			# Find the circular grid
 			ret, corners = cv2.findCirclesGrid(im_with_keypoints, CHECKERBOARD, None, flags = cv2.CALIB_CB_ASYMMETRIC_GRID)   # Find the circle grid
-
+			
 			# If found, add object points, image points
 			if ret == True:
 				# Save the frame to the directory
@@ -213,8 +213,20 @@ def new_frame(pipe_ep):
 		else:
 			display_mat = mat
 		
-		#convert image to gray scale in 8 bit
-		ir_img = cv2.normalize(display_mat, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+		
+		# Normalize the image to the range 0-255
+		display_mat_normalized = cv2.normalize(display_mat, None, 0, 255, cv2.NORM_MINMAX)
+
+		# Convert to uint8
+		display_mat_normalized = display_mat_normalized.astype(np.uint8)
+
+		# Apply CLAHE to increase contrast
+		clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+		display_mat_clahe = clahe.apply(display_mat_normalized)
+
+		# Convert image to gray scale in 8 bit
+		ir_img = display_mat_clahe
+
 
 if __name__ == "__main__":
 	main()

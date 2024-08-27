@@ -60,26 +60,36 @@ def main():
 	streaming_rate=125.
 	SS=StreamingSend(RR_robot_sub,streaming_rate=streaming_rate)
 
-	#####################################Path Gen#####################################
+	#####################################Path Gen1#####################################
+	q1_default=np.zeros(6)
+	q1_default[1]=-np.pi/6
 	q_positioner_home=np.array([-15.*np.pi/180.,np.pi/2])
 	center_of_rotation=positioner.fwd(q_positioner_home,world=True).p
-	measure_distance=500
+	measure_distance=550
 	H2010_1440=H_inv(robot2.base_H)
-	p2_in_base_frame=np.dot(H2010_1440[:3,:3],center_of_rotation)+H2010_1440[:3,3]
-
-	total_time=10
-	num_points=total_time*streaming_rate
-	q2_cmd_all=[]
-	for angle in np.linspace(np.pi/4,5*np.pi/4,num_points):	#define rotation range
-		q_positioner=np.array([angle,np.pi/2])
-		SS.send_positioner(q_positioner)
+	center_of_rotation_in_base_frame=np.dot(H2010_1440[:3,:3],center_of_rotation)+H2010_1440[:3,3]
+	total_time=20
+	num_points=int(total_time*streaming_rate)
+	q2_cmd_all1=[]
+	for angle in np.linspace(np.pi/5,3*np.pi/5,num_points):	#define rotation range
 		v_z_global=-Rx(angle)[:,1]
 		v_z=H2010_1440[:3,:3]@v_z_global ###pointing toward positioner's X with 15deg tiltd angle looking down
 		v_y=VectorPlaneProjection(np.array([-1,0,0]),v_z)	###FLIR's Y pointing toward 1440's -X in 1440's base frame, projected on v_z's plane
 		v_x=np.cross(v_y,v_z)
-		p2_in_base_frame=p2_in_base_frame-measure_distance*v_z			###back project measure_distance-mm away from torch
+		p2_in_base_frame=center_of_rotation_in_base_frame-measure_distance*v_z			###back project measure_distance-mm away from torch
 		R2=np.vstack((v_x,v_y,v_z)).T
-		q2_cmd_all.append(robot2.inv(p2_in_base_frame,R2,last_joints=np.zeros(6))[0])
+		q2_cmd_all1.append(robot2.inv(p2_in_base_frame,R2,last_joints=np.zeros(6))[0])
+
+	#####################################Path Gen2#####################################
+	q2_cmd_all2=[]
+	for angle in np.linspace(np.pi/2,np.pi/4,num_points):	#define rotation range
+		v_z_global=-Ry(-angle)[:,0]
+		v_z=H2010_1440[:3,:3]@v_z_global ###pointing toward positioner's X with 15deg tiltd angle looking down
+		v_y=VectorPlaneProjection(np.array([-1,0,0]),v_z)	###FLIR's Y pointing toward 1440's -X in 1440's base frame, projected on v_z's plane
+		v_x=np.cross(v_y,v_z)
+		p2_in_base_frame=center_of_rotation_in_base_frame-measure_distance*v_z			###back project measure_distance-mm away from torch
+		R2=np.vstack((v_x,v_y,v_z)).T
+		q2_cmd_all2.append(robot2.inv(p2_in_base_frame,R2,last_joints=np.zeros(6))[0])
 
 	# Define the dimensions of the checkerboard
 	CHECKERBOARD = (4,11)
@@ -172,46 +182,79 @@ def main():
 	objp[43] = (360, 216, 0)
 	##############################################MOTION#############################################################
 
-	SS.jog2q(np.hstack((np.zeros(6),q2_cmd_all[0]),q_positioner_home))
+	
 
 	# Arrays to store object points and image points from all images
-	objpoints = [] # 3d points in real world space
-	imgpoints = [] # 2d points in image plane
-	count = 0
 	images = []
 	associated_q2=[]
+
+	SS.jog2q(np.hstack((q1_default,q2_cmd_all1[0],q_positioner_home)))
 	now=time.perf_counter()
 	###CONTINUOUS CAPTURE for CALIBRATION
-	for i in range(len(q2_cmd_all)):
-		SS.position_cmd(np.hstack((np.zeros(6),q2_cmd_all[i]),q_positioner_home),now)
+	for i in range(len(q2_cmd_all1)):
+		SS.position_cmd(np.hstack((q1_default,q2_cmd_all1[i],q_positioner_home)),now)
 		now=time.perf_counter()
 		if ir_img is not None and image_updated:
+			associated_q2.append(SS.q_cur[6:12])
+			image_updated = False	
+			images.append(ir_img)
+
+	SS.jog2q(np.hstack((q1_default,q2_cmd_all2[0],q_positioner_home)))
+	now=time.perf_counter()
+	###CONTINUOUS CAPTURE for CALIBRATION
+	for i in range(len(q2_cmd_all2)):
+		SS.position_cmd(np.hstack((q1_default,q2_cmd_all2[i],q_positioner_home)),now)
+		now=time.perf_counter()
+		if ir_img is not None and image_updated:
+			associated_q2.append(SS.q_cur[6:12])
 			image_updated = False
+			images.append(ir_img)
+			
 
-			ir_img_inverted = cv2.bitwise_not(ir_img)
-			###########################################################################################################
-			keypoints = blobDetector.detect(ir_img_inverted) # Detect blobs.
 
-			# Draw detected blobs as red circles. This helps cv2.findCirclesGrid() .
-			im_with_keypoints = cv2.drawKeypoints(ir_img_inverted, keypoints, np.array([]), (0,255,0), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-			###########################################################################################################
+	objpoints = [] # 3d points in real world space
+	imgpoints = [] # 2d points in image plane
+	valid_indices=[]
+	processed_images = []
+	###process captured images
+	for i in range(len(associated_q2)):
 
-			# Find the circular grid
-			ret, corners = cv2.findCirclesGrid(im_with_keypoints, CHECKERBOARD, None, flags = cv2.CALIB_CB_ASYMMETRIC_GRID)   # Find the circle grid
+		ir_img_inverted = cv2.bitwise_not(images[i])
+		# Normalize the image to the range 0-255
+		ir_img_normalized = cv2.normalize(ir_img_inverted, None, 0, 255, cv2.NORM_MINMAX)
 
-			# If found, add object points, image points
-			if ret == True:
+		# Convert to uint8
+		ir_img_normalized = ir_img_normalized.astype(np.uint8)
 
-				images.append(ir_img_inverted)
-				objpoints.append(objp)
-				imgpoints.append(corners)
-				count += 1
-				associated_q2.append(SS.q_cur[6:12])
+		# Apply CLAHE to increase contrast
+		clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+		ir_img_clahe = clahe.apply(ir_img_normalized)
+
+		keypoints = blobDetector.detect(ir_img_clahe) # Detect blobs.
+
+		# Draw detected blobs as red circles. This helps cv2.findCirclesGrid() .
+		im_with_keypoints = cv2.drawKeypoints(ir_img_clahe, keypoints, np.array([]), (0,255,0), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+		###########################################################################################################
+
+		# Find the circular grid
+		ret, corners = cv2.findCirclesGrid(im_with_keypoints, CHECKERBOARD, None, flags = cv2.CALIB_CB_ASYMMETRIC_GRID)   # Find the circle grid
+
+		# If found, add object points, image points
+		if ret == True:
+
+			valid_indices.append(i)
+			processed_images.append(ir_img_clahe)
+			objpoints.append(objp)
+			imgpoints.append(corners)
+
 	
-	print("Number of images captured: ", count)
+	print("Number of images captured: ", len(valid_indices))
+	associated_q2 = [associated_q2[i] for i in valid_indices]
+
+
 	#save data
-	for i in range(len(images)):
-		cv2.imwrite(f'captured_data/image_{i}.jpg', images[i])
+	for i in range(len(processed_images)):
+		cv2.imwrite(f'captured_data/image_{i}.jpg', processed_images[i])
 	np.savetxt('captured_data/associated_q2.csv',associated_q2,delimiter=',')
 
 	# Calibrate the camera
@@ -223,7 +266,7 @@ def main():
 
 	R_gripper2base = []
 	t_gripper2base = []
-	for i in range(len(images)):
+	for i in range(len(associated_q2)):
 		
 		r2_pose=robot2_no_tool.fwd(associated_q2[i])
 		R_gripper2base.append(r2_pose.R)
@@ -259,9 +302,12 @@ def new_frame(pipe_ep):
 		else:
 			display_mat = mat
 		
-		#convert image to gray scale in 8 bit
-		ir_img = cv2.normalize(display_mat, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+		ir_img = display_mat
+
+		#updated flag
 		image_updated = True
+
+		
 
 if __name__ == "__main__":
 	main()
