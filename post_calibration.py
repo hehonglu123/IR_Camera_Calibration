@@ -1,6 +1,29 @@
 import cv2, time, os, traceback
-import numpy as np    
+import numpy as np
+from scipy.spatial import KDTree
+from motoman_def import *
+
+# Function to check the quality of detected corners
+def is_good_corners(corners, checkerboard_dims):
+    if corners is None:
+        return False
     
+    # Check if the number of detected corners matches the expected number
+    expected_num_corners = checkerboard_dims[0] * checkerboard_dims[1]
+    if len(corners) != expected_num_corners:
+        return False
+    
+    # Use KDTree to find the nearest neighbors
+    tree = KDTree(corners.reshape(-1, 2))
+    distances, _ = tree.query(corners.reshape(-1, 2), k=2)  # k=2 to get the nearest neighbor
+    nearest_distances = distances[:, 1]  # The first column is the distance to itself, so we take the second column
+    
+
+    if np.max(nearest_distances) > 37:  # Define some_threshold based on your requirements
+        return False
+    
+    return True
+
 # Define the dimensions of the checkerboard
 CHECKERBOARD = (4,11)
 
@@ -102,42 +125,62 @@ imgpoints = [] # 2d points in image plane
 
 # List all image files in the "captured_images/" directory
 recorded_dir='captured_data/'
-image_files = [f for f in os.listdir(recorded_dir) if f.endswith('.jpg')]
-
+associated_q2=np.loadtxt(recorded_dir+'associated_q2.csv',delimiter=',')[::1]
+num_points=len(associated_q2)
+images=[]
+valid_indices=[]
 # Loop through each image file
-for image_file in image_files:
-    # Read the image
-    ir_img_inverted = cv2.imread(os.path.join(recorded_dir, image_file), cv2.IMREAD_GRAYSCALE)
-    
-    if ir_img_inverted is not None:
-        # Process the image
-        keypoints = blobDetector.detect(ir_img_inverted)  # Detect blobs
-        im_with_keypoints = cv2.drawKeypoints(ir_img_inverted, keypoints, np.array([]), (0, 255, 0), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-        
-        # Find the circular grid
-        ret, corners = cv2.findCirclesGrid(im_with_keypoints, CHECKERBOARD, None, flags=cv2.CALIB_CB_ASYMMETRIC_GRID)
-        
-        # If found, add object points, image points
-        if ret:
-            objpoints.append(objp)
-            imgpoints.append(corners)
-            # Draw and display the corners
-            # cv2.drawChessboardCorners(ir_img_inverted, CHECKERBOARD, corners, ret)
+for i in range(num_points):
+    img=cv2.imread(recorded_dir+'image_'+str(i)+'.jpg',cv2.IMREAD_GRAYSCALE)
+    images.append(img)
 
-        
-        # Display the frame
-        # cv2.imshow('IR', im_with_keypoints)
-        
-        # If the user presses the 'q' key, exit the loop
-        # if cv2.waitKey(200) & 0xFF == ord('q'):
-            # break
+
+    # Process the image
+    keypoints = blobDetector.detect(img)  # Detect blobs
+    im_with_keypoints = cv2.drawKeypoints(img, keypoints, np.array([]), (0, 255, 0), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    
+    # Find the circular grid
+    ret, corners = cv2.findCirclesGrid(im_with_keypoints, CHECKERBOARD, None, flags=cv2.CALIB_CB_ASYMMETRIC_GRID)
+    
+    # If found, add object points, image points
+    if ret and is_good_corners(corners, CHECKERBOARD):
+        objpoints.append(objp)
+        imgpoints.append(corners)
+        valid_indices.append(i)
+    #     cv2.drawChessboardCorners(img, CHECKERBOARD, corners, ret)
+
+    
+    # cv2.imshow('IR', img)
+    
+    # if cv2.waitKey(200) & 0xFF == ord('q'):
+    #     break
 
 # Release the webcam and destroy all windows
 # cv2.destroyAllWindows()
-
+associated_q2=associated_q2[valid_indices]
+print(len(objpoints),len(imgpoints),len(associated_q2))
 # Calibrate the camera
-ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints[::10], imgpoints[::10], ir_img_inverted.shape[::-1], None, None)
+ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, img.shape[::-1], None, None)
 
 # Print the camera matrix and distortion coefficients
 print("Camera Matrix: \n", mtx)
 print("Distortion Coefficients: \n", dist)
+
+config_dir='../../Welding_Motoman/config/'
+robot2_no_tool=robot_obj('MA1440_A0',def_path=config_dir+'MA1440_A0_robot_default_config.yml',\
+		pulse2deg_file_path=config_dir+'MA1440_A0_pulse2deg_real.csv',base_transformation_file=config_dir+'MA1440_pose.csv')
+R_gripper2base = []
+t_gripper2base = []
+for i in range(len(associated_q2)):
+    
+    r2_pose=robot2_no_tool.fwd(associated_q2[i])
+    R_gripper2base.append(r2_pose.R)
+    t_gripper2base.append(r2_pose.p)
+print(len(R_gripper2base),len(t_gripper2base),len(rvecs),len(tvecs))
+R_target2cam = []
+R_cam2gripper, t_cam2gripper = cv2.calibrateHandEye(R_gripper2base, t_gripper2base, rvecs, tvecs)
+# Print the results
+print("Rotation matrix from camera to gripper:")
+print(R_cam2gripper)
+print("Translation vector from camera to gripper:")
+print(t_cam2gripper)
