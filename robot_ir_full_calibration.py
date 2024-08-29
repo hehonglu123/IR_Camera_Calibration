@@ -4,6 +4,8 @@ from RobotRaconteur.Client import *
 from motoman_def import *
 from StreamingSend import *
 
+from calibration import *
+
 ir_img=None
 image_consts = None
 image_updated = False
@@ -93,93 +95,9 @@ def main():
 
 	# Define the dimensions of the checkerboard
 	CHECKERBOARD = (4,11)
-
-	###########################################################################################################
-	# termination criteria
-	criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-
-	########################################Blob Detector##############################################
-
-	# Setup SimpleBlobDetector parameters.
-	blobParams = cv2.SimpleBlobDetector_Params()
-
-	# Change thresholds
-	blobParams.minThreshold = 8
-	blobParams.maxThreshold = 255
-
-	# Filter by Area.
-	blobParams.filterByArea = True
-	blobParams.minArea = 64     # minArea may be adjusted to suit for your experiment
-	blobParams.maxArea = 2500   # maxArea may be adjusted to suit for your experiment
-
-	# Filter by Circularity
-	blobParams.filterByCircularity = True
-	blobParams.minCircularity = 0.1
-
-	# Filter by Convexity
-	blobParams.filterByConvexity = True
-	blobParams.minConvexity = 0.87
-
-	# Filter by Inertia
-	blobParams.filterByInertia = True
-	blobParams.minInertiaRatio = 0.01
-
-	# Create a detector with the parameters
-	blobDetector = cv2.SimpleBlobDetector_create(blobParams)
-
-	###################################################################################################
-
-	###################################################################################################
-
-	# Original blob coordinates, supposing all blobs are of z-coordinates 0
-	# And, the distance between every two neighbour blob circle centers is 72 centimetres
-	# In fact, any number can be used to replace 72.
-	# Namely, the real size of the circle is pointless while calculating camera calibration parameters.
-	objp = np.zeros((44, 3), np.float32)
-	objp[0]  = (0  , 0  , 0)
-	objp[1]  = (0  , 72 , 0)
-	objp[2]  = (0  , 144, 0)
-	objp[3]  = (0  , 216, 0)
-	objp[4]  = (36 , 36 , 0)
-	objp[5]  = (36 , 108, 0)
-	objp[6]  = (36 , 180, 0)
-	objp[7]  = (36 , 252, 0)
-	objp[8]  = (72 , 0  , 0)
-	objp[9]  = (72 , 72 , 0)
-	objp[10] = (72 , 144, 0)
-	objp[11] = (72 , 216, 0)
-	objp[12] = (108, 36,  0)
-	objp[13] = (108, 108, 0)
-	objp[14] = (108, 180, 0)
-	objp[15] = (108, 252, 0)
-	objp[16] = (144, 0  , 0)
-	objp[17] = (144, 72 , 0)
-	objp[18] = (144, 144, 0)
-	objp[19] = (144, 216, 0)
-	objp[20] = (180, 36 , 0)
-	objp[21] = (180, 108, 0)
-	objp[22] = (180, 180, 0)
-	objp[23] = (180, 252, 0)
-	objp[24] = (216, 0  , 0)
-	objp[25] = (216, 72 , 0)
-	objp[26] = (216, 144, 0)
-	objp[27] = (216, 216, 0)
-	objp[28] = (252, 36 , 0)
-	objp[29] = (252, 108, 0)
-	objp[30] = (252, 180, 0)
-	objp[31] = (252, 252, 0)
-	objp[32] = (288, 0  , 0)
-	objp[33] = (288, 72 , 0)
-	objp[34] = (288, 144, 0)
-	objp[35] = (288, 216, 0)
-	objp[36] = (324, 36 , 0)
-	objp[37] = (324, 108, 0)
-	objp[38] = (324, 180, 0)
-	objp[39] = (324, 252, 0)
-	objp[40] = (360, 0  , 0)
-	objp[41] = (360, 72 , 0)
-	objp[42] = (360, 144, 0)
-	objp[43] = (360, 216, 0)
+	blobDetector=blobDetector_initialize()
+	pattern_points = pattern_gen(40)
+	
 	##############################################MOTION#############################################################
 
 	
@@ -216,7 +134,7 @@ def main():
 	imgpoints = [] # 2d points in image plane
 	valid_indices=[]
 	processed_images = []
-	###process captured images
+	###filter captured images with no detected checkerboard
 	for i in range(len(associated_q2)):
 
 		ir_img_inverted = cv2.bitwise_not(images[i])
@@ -229,22 +147,17 @@ def main():
 		# Apply CLAHE to increase contrast
 		clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
 		ir_img_clahe = clahe.apply(ir_img_normalized)
-
-		keypoints = blobDetector.detect(ir_img_clahe) # Detect blobs.
-
-		# Draw detected blobs as red circles. This helps cv2.findCirclesGrid() .
-		im_with_keypoints = cv2.drawKeypoints(ir_img_clahe, keypoints, np.array([]), (0,255,0), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 		###########################################################################################################
 
 		# Find the circular grid
-		ret, corners = cv2.findCirclesGrid(im_with_keypoints, CHECKERBOARD, None, flags = cv2.CALIB_CB_ASYMMETRIC_GRID)   # Find the circle grid
+		ret, corners = cv2.findCirclesGrid(ir_img_clahe,CHECKERBOARD,flags=cv2.CALIB_CB_ASYMMETRIC_GRID,blobDetector=blobDetector)   # Find the circle grid
 
 		# If found, add object points, image points
 		if ret == True:
 
 			valid_indices.append(i)
 			processed_images.append(ir_img_clahe)
-			objpoints.append(objp)
+			objpoints.append(pattern_points)
 			imgpoints.append(corners)
 
 	
@@ -257,28 +170,6 @@ def main():
 		cv2.imwrite(f'captured_data/image_{i}.jpg', processed_images[i])
 	np.savetxt('captured_data/associated_q2.csv',associated_q2,delimiter=',')
 
-	# Calibrate the camera
-	ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, ir_img.shape[::-1], None, None)
-
-	# Print the camera matrix and distortion coefficients
-	print("Camera Matrix: \n", mtx)
-	print("Distortion Coefficients: \n", dist)
-
-	R_gripper2base = []
-	t_gripper2base = []
-	for i in range(len(associated_q2)):
-		
-		r2_pose=robot2_no_tool.fwd(associated_q2[i])
-		R_gripper2base.append(r2_pose.R)
-		t_gripper2base.append(r2_pose.p)
-
-	R_target2cam = []
-	R_cam2gripper, t_cam2gripper = cv2.calibrateHandEye(R_gripper2base, t_gripper2base, rvecs, tvecs)
-	# Print the results
-	print("Rotation matrix from camera to gripper:")
-	print(R_cam2gripper)
-	print("Translation vector from camera to gripper:")
-	print(t_cam2gripper)
 
 def new_frame(pipe_ep):
 	global ir_img, image_consts, image_updated
